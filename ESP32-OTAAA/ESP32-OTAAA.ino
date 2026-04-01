@@ -74,7 +74,7 @@ ESP32S3_SIM7670_OTA ota(
 Preferences prefs;
 
 // ===================== Globals =====================
-String tId = "";
+String tId = "t68";
 sensors_event_t a, g, temp;
 
 RTC_DATA_ATTR int bootCount = 0;
@@ -180,7 +180,7 @@ void setup() {
   float rainfall = getRainfallMM();
 
   String url =
-    "http://landslidemonitoring.esy.es/ota.php?api_key=3WU63XFVOKEC1VBM"
+    "http://landslidemonitoring.in/ota.php?api_key=3WU63XFVOKEC1VBM"
     "&triplet=" + tId +
     "&" + tId + "s1=" + String(readTemp()) + "," + String(readHumidity()) +
     "&" + tId + "s2=" + String(readPressure()) +
@@ -246,6 +246,9 @@ bool extractOTA(String payload, String &version, String &url) {
 
 // ===================== GSM =====================
 String sendGSMData(String url) {
+  Serial.println("*************URL*************");
+  Serial.println(url);
+  Serial.println("*****************************");
 
   String response = "";
   String urcLine = "";
@@ -498,3 +501,30 @@ String getS5Reading() {
          String(g.gyro.y, 2) + "," + String(g.gyro.z, 2) + "," +
          String(roll, 2) + "," + String(pitch, 2) + "," + String(yaw, 2) + "," + String(motionCount) + "," + "0,0";
 }
+
+
+/*
+http://landslidemonitoring.esy.es/ota.php?api_key=3WU63XFVOKEC1VBM&triplet=
+t1&t1s1=20.50,57.90&
+t1s2=892.71&
+t1s3=0.00&
+t1s4=10.00&
+t1s5=0.00,0.00,0.00,0.00,0.00,0.00,0.00,nan,0.00,2200,0,0&
+t1s6=16.73&
+t1s7=2504&
+t1s8=0&
+t1s9=00.0000|00.0000
+*/
+
+/*
+http://landslidemonitoring.esy.es/ota.php?api_key=3WU63XFVOKEC1VBM&triplet=t1&
+t1s1=20.70,58.00&       //temp+humidity
+t1s2=892.56&            //pressure
+t1s3=0.00&              //rainfall
+t1s4=9.17&              //light
+t1s5=1.39,-1.04,10.04,0.10,0.04,-0.04,-5.94,-7.84,-23.38,0,0,0&   //a.x, a.y, a.z, g.x, g.y, g.z, roll, pitch, yaw, motionCount, 0, 0
+t1s6=17.36&             //soil temp
+t1s7=2507&              //soil moisture
+t1s8=0&
+t1s9=00.0000|00.0000
+*/
