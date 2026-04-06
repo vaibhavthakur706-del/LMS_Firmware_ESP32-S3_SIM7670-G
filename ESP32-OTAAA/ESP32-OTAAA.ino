@@ -80,7 +80,7 @@ ESP32S3_SIM7670_OTA ota(
 Preferences prefs;
 
 // ===================== Globals =====================
-String tId = "t68";
+String tId = "t1";
 sensors_event_t a, g, temp;
 
 RTC_DATA_ATTR int bootCount = 0;
@@ -139,13 +139,13 @@ void setup() {
 
   // ===== NVS Triplet ID =====
   prefs.begin("device", true);  // READ-ONLY MODE
-  tId = prefs.getString("tid", "");
-  if (tId == "") {
-    Serial.println("❌ ERROR: tid not found in flash");
-  } else {
-    Serial.print("✅ Device tId = ");
-    Serial.println(tId);
-  }
+                                // tId = prefs.getString("tid", "");
+                                // if (tId == "") {
+                                //   Serial.println("❌ ERROR: tid not found in flash");
+                                // } else {
+  Serial.print("✅ Device tId = ");
+  Serial.println(tId);
+  // }
   prefs.end();
   Serial.println("Triplet ID (from flash): " + tId);
 
@@ -213,7 +213,7 @@ void setup() {
   float rainfall = getRainfallMM();
 
   String url =
-    "http://landslidemonitoring.in/ota.php?api_key=3WU63XFVOKEC1VBM"
+    "https://landslidemonitoring.in/ota.php?api_key=3WU63XFVOKEC1VBM"
     "&triplet="
     + tId + "&" + tId + "s1=" + String(readTemp()) + "," + String(readHumidity()) + "&" + tId + "s2=" + String(readPressure()) + "&" + tId + "s3=" + String(rainfall) + "&" + tId + "s4=" + String(readLight()) + "&" + tId + "s5=" + getS5Reading() + "&" + tId + "s6=" + String(readSoilTemperature()) + "&" + tId + "s7=" + String(analogRead(SOIL_MOISTURE)) + "&" + tId + "s8=0" + "&" + tId + "s9=00.0000|00.0000";
 
@@ -402,16 +402,16 @@ void readGSM() {
 void initBH1750() {
   if (!lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE, 0x23)) {
     Serial.println("❌ BH1750 not found!");
-    while (1)
-      ;
+    // while (1)
+    //   ;
   }
 }
 
 void initBMP180() {
   if (!bmp.begin()) {
     Serial.println("❌ BMP180 not found!");
-    while (1)
-      ;
+    // while (1)
+    //   ;
   }
 }
 
@@ -422,7 +422,14 @@ float readLight() {
 }
 
 float readPressure() {
-  float p = bmp.readPressure() / 100.0;
+  Serial.print("tari maa ki value: ");
+  uint32_t d = 200;
+  // bmp.readPressure();
+  float p = 0;
+  Serial.println(d);
+  if (d != 0) {
+    p = d / 100.0;
+  }
   Serial.printf("🌡️ Pressure: %.2f hPa\n", p);
   return p;
 }
