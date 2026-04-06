@@ -74,8 +74,8 @@ ESP32S3_SIM7670_OTA ota(
   "airtelgprs.com",
   "",
   "",
-  "landslidemonitoring.esy.es",
-  80);
+  "landslidemonitoring.in",
+  443);
 
 Preferences prefs;
 
@@ -139,13 +139,13 @@ void setup() {
 
   // ===== NVS Triplet ID =====
   prefs.begin("device", true);  // READ-ONLY MODE
-                                // tId = prefs.getString("tid", "");
-                                // if (tId == "") {
-                                //   Serial.println("❌ ERROR: tid not found in flash");
-                                // } else {
-  Serial.print("✅ Device tId = ");
-  Serial.println(tId);
-  // }
+  tId = prefs.getString("tid", "");
+  if (tId == "") {
+    Serial.println("❌ ERROR: tid not found in flash");
+  } else {
+    Serial.print("✅ Device tId = ");
+    Serial.println(tId);
+  }
   prefs.end();
   Serial.println("Triplet ID (from flash): " + tId);
 
@@ -422,7 +422,6 @@ float readLight() {
 }
 
 float readPressure() {
-  Serial.print("tari maa ki value: ");
   uint32_t d = 200;
   // bmp.readPressure();
   float p = 0;
