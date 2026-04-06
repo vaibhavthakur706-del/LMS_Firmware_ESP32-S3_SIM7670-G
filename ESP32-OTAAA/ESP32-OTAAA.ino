@@ -14,7 +14,7 @@
 
 // ===== OTA LIB =====
 #include <ESP32S3_SIM7670_OTA.h>
-#define CURRENT_FIRMWARE_VERSION "1.0.1"
+#define CURRENT_FIRMWARE_VERSION "1.0.2"
 
 // ===================== Pin Definitions =====================
 
@@ -422,8 +422,7 @@ float readLight() {
 }
 
 float readPressure() {
-  uint32_t d = 200;
-  // bmp.readPressure();
+  uint32_t d = bmp.readPressure();
   float p = 0;
   Serial.println(d);
   if (d != 0) {
