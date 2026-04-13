@@ -4,24 +4,44 @@ Preferences prefs;
 
 String inputTID = "";
 
+
+void getTID() {
+  prefs.begin("device", true);  // READ-ONLY MODE
+  inputTID = prefs.getString("tid", "");
+  if (inputTID == "") {
+    Serial.println("[ERROR] tid not found in flash");
+  } else {
+    Serial.print("[SUCCESS] Device tId = ");
+    Serial.println(inputTID);
+  }
+  prefs.end();
+  inputTID = "";
+}
+
+void saveTID(String tid) {
+  Serial.println("\n[INFO] Saving TID...");
+
+  // Open NVS in WRITE mode
+  prefs.begin("device", false);
+
+  // Save TID
+  prefs.putString("tid", tid);
+
+  prefs.end();
+
+  Serial.print("[DONE] TID Saved Successfully: ");
+  Serial.println(tid);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
 
   Serial.println("=== TID Writer Firmware ===");
-  Serial.println("Enter TID and press ENTER:");
 
-    // ===== NVS Triplet ID =====
-  prefs.begin("device", true);  // READ-ONLY MODE
-  inputTID = prefs.getString("tid", "");
-  if (inputTID == "") {
-    Serial.println("❌ ERROR: tid not found in flash");
-  } else {
-    Serial.print("✅ Device tId = ");
-    Serial.println(inputTID);
-  }
-  prefs.end();
-  Serial.println("Triplet ID (from flash): " + inputTID);
+  getTID();
+
+  Serial.println("\n[INFO] Enter new TID:");
 }
 
 void loop() {
@@ -33,25 +53,11 @@ void loop() {
       if (inputTID.length() > 0) {
         saveTID(inputTID);
         inputTID = "";
-        Serial.println("\nEnter new TID:");
+        getTID();
+        Serial.println("\n[INFO] Enter new TID:");
       }
     } else {
       inputTID += c;
     }
   }
-}
-
-void saveTID(String tid) {
-  Serial.println("\nSaving TID...");
-
-  // Open NVS in WRITE mode
-  prefs.begin("device", false);
-
-  // Save TID
-  prefs.putString("tid", tid);
-
-  prefs.end();
-
-  Serial.print("✅ TID Saved Successfully: ");
-  Serial.println(tid);
 }

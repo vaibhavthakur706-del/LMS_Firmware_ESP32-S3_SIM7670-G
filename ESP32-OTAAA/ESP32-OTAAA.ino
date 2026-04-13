@@ -531,6 +531,19 @@ String getS5Reading() {
   return String(a.acceleration.x, 2) + "," + String(a.acceleration.y, 2) + "," + String(a.acceleration.z, 2) + "," + String(g.gyro.x, 2) + "," + String(g.gyro.y, 2) + "," + String(g.gyro.z, 2) + "," + String(roll, 2) + "," + String(pitch, 2) + "," + String(yaw, 2) + "," + String(motionCount) + "," + "0,0";
 }
 
+  /*
+  AT+CGDCONT=1,"IP","airtelgprs.com"
+  AT+CGACT=1,1
+  AT+HTTPINIT
+  AT+HTTPPARA="URL","https://landslidemonitoring.in/ota.php?api_key=3WU63XFVOKEC1VBM&triplet=t1&t1s1=255.00,255.00&t1s2=2.55&t1s3=0.00&t1s4=-2.00&t1s5=7.35,-82.69,0.62,-14.64,18.67,-14.92,-89.57,-5.08,-134.47,0,0,0&t1s6=32.50&t1s7=61&t1s8=0&t1s9=00.0000|00.0000"
+  AT+HTTPACTION=0
+  AT+HTTPREAD=0,Content Length(e.g. 677)
+  */
+
+
+/*
+https://landslidemonitoring.in/ota.php?api_key=3WU63XFVOKEC1VBM&triplet=t1&t1s1=255.00,255.00&t1s2=2.55&t1s3=0.00&t1s4=-2.00&t1s5=7.35,-82.69,0.62,-14.64,18.67,-14.92,-89.57,-5.08,-134.47,0,0,0&t1s6=32.50&t1s7=61&t1s8=0&t1s9=00.0000|00.0000
+*/
 
 /*
 http://landslidemonitoring.esy.es/ota.php?api_key=3WU63XFVOKEC1VBM&triplet=
