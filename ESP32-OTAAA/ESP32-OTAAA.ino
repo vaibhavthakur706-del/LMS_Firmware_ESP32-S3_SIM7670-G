@@ -151,10 +151,10 @@ void setup() {
 
   pinMode(SOIL_MOISTURE, INPUT);
   pinMode(SOIL_TEMP_PIN, INPUT);
-  pinMode(RAIN_PIN, INPUT_PULLUP);
+  pinMode(RAIN_PIN, INPUT_PULLDOWN);
   pinMode(MPU_INT_PIN, INPUT);
 
-  attachInterrupt(digitalPinToInterrupt(RAIN_PIN), rainISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(RAIN_PIN), rainISR, RISING);
   attachInterrupt(digitalPinToInterrupt(MPU_INT_PIN), mpuISR, RISING);
 
   ++bootCount;
