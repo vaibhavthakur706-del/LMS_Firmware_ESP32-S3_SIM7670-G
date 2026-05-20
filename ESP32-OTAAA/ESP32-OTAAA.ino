@@ -53,6 +53,7 @@ uint8_t payload[] = { '1', 0x00 };
 // Rain Sensor
 #define RAIN_PIN GPIO_NUM_16
 #define RAIN_MM_PER_TIP 0.2794
+#define RAIN_DEBOUNCE_US 200000UL  // 200 ms debounce
 
 // GSM Serial (SIM7670X)
 #define GSM_RX 17
@@ -84,11 +85,11 @@ String tId = "t1";
 sensors_event_t a, g, temp;
 
 RTC_DATA_ATTR int bootCount = 0;
-RTC_DATA_ATTR volatile unsigned long rainCount = 0;
+RTC_DATA_ATTR unsigned long rainCount = 0;  // persistent across deep-sleep
 RTC_DATA_ATTR volatile unsigned long motionCount = 0;
 
 bool rainWake = false;
-bool loRaAvailable = false;  //  ADDED
+bool loRaAvailable = false;
 
 // ===================== Function Declarations =====================
 String sendGSMData(String url);
@@ -110,18 +111,27 @@ float getRainfallMM();
 
 void sendRH(const uint8_t *payload, uint8_t payloadLen) {
   LoRa.beginPacket();
-  LoRa.write(RH_TO);                // byte 0: destination (0xFF = broadcast)
-  LoRa.write(RH_FROM);              // byte 1: source      (0xFF = broadcast)
-  LoRa.write(RH_ID);                // byte 2: message ID
-  LoRa.write(RH_FLAGS);             // byte 3: flags
-  LoRa.write(payload, payloadLen);  // actual payload
+  LoRa.write(RH_TO);
+  LoRa.write(RH_FROM);
+  LoRa.write(RH_ID);
+  LoRa.write(RH_FLAGS);
+  LoRa.write(payload, payloadLen);
   LoRa.endPacket();
 }
 
 // ===================== ISR =====================
+// Debounced rain ISR (used when awake; EXT1 handles counting during sleep)
+volatile unsigned long lastTipMicros = 0;
+
 void IRAM_ATTR rainISR() {
-  rainCount++;
+  unsigned long now = micros();
+  unsigned long delta = now - lastTipMicros;
+  if (delta > RAIN_DEBOUNCE_US) {
+    lastTipMicros = now;
+    rainCount++;
+  }
 }
+
 void IRAM_ATTR mpuISR() {
   motionCount++;
 }
@@ -129,16 +139,45 @@ void IRAM_ATTR mpuISR() {
 // ===================== Setup =====================
 void setup() {
 
+  // --- EXT0: MPU wakeup ---
   esp_sleep_enable_ext0_wakeup((gpio_num_t)MPU_INT_PIN, 1);
   rtc_gpio_pullup_dis((gpio_num_t)MPU_INT_PIN);
   rtc_gpio_pulldown_en((gpio_num_t)MPU_INT_PIN);
 
+  // --- EXT1: Rain gauge wakeup (RISING — pin goes HIGH on each tip) ---
+  uint64_t rainMask = 1ULL << RAIN_PIN;
+  esp_sleep_enable_ext1_wakeup(rainMask, ESP_EXT1_WAKEUP_ANY_HIGH);
+  rtc_gpio_pullup_dis((gpio_num_t)RAIN_PIN);
+  rtc_gpio_pulldown_en((gpio_num_t)RAIN_PIN);
+
   Serial.begin(115200);
+  SerialAt.begin(115200, SERIAL_8N1, GSM_RX, GSM_TX);
+  delay(200);
+
+  // ===== Check wakeup cause FIRST =====
+  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+
+  if (cause == ESP_SLEEP_WAKEUP_EXT1) {
+    // ── Rain tip wakeup: increment count immediately and go back to sleep ──
+    noInterrupts();
+    rainCount++;
+    interrupts();
+
+    Serial.printf("🌧️ Rain tip! Count: %lu  (%.4f mm)\n",
+                  rainCount, rainCount * RAIN_MM_PER_TIP);
+    Serial.flush();
+    delay(50);  // let serial drain
+    esp_deep_sleep_start();
+    // execution never reaches here
+  }
+
+  // ── All other wakeups (timer, EXT0, power-on) continue normally ──
+
   SerialAt.begin(115200, SERIAL_8N1, GSM_RX, GSM_TX);
   delay(1000);
 
   // ===== NVS Triplet ID =====
-  prefs.begin("device", true);  // READ-ONLY MODE
+  prefs.begin("device", true);
   tId = prefs.getString("tid", "");
   if (tId == "") {
     Serial.println("❌ ERROR: tid not found in flash");
@@ -151,10 +190,12 @@ void setup() {
 
   pinMode(SOIL_MOISTURE, INPUT);
   pinMode(SOIL_TEMP_PIN, INPUT);
-  pinMode(RAIN_PIN, INPUT_PULLDOWN);
-  pinMode(MPU_INT_PIN, INPUT);
 
+  // Rain pin: INPUT_PULLDOWN + RISING (matches test sketch)
+  pinMode(RAIN_PIN, INPUT_PULLDOWN);
   attachInterrupt(digitalPinToInterrupt(RAIN_PIN), rainISR, RISING);
+
+  pinMode(MPU_INT_PIN, INPUT);
   attachInterrupt(digitalPinToInterrupt(MPU_INT_PIN), mpuISR, RISING);
 
   ++bootCount;
@@ -167,49 +208,40 @@ void setup() {
   initMPU();
   readMPU();
 
-  // ===================== LoRa INIT (ADDED ONLY) =====================
+  // ===================== LoRa INIT =====================
   Serial.println("Initializing LoRa...");
   LoRa.setPins(PIN_LORA_CS, PIN_LORA_RST, PIN_LORA_DIO0);
   SPI.begin(PIN_LORA_SCK, PIN_LORA_MISO, PIN_LORA_MOSI, PIN_LORA_CS);
 
   if (LoRa.begin(LORA_FREQUENCY)) {
     loRaAvailable = true;
-    Serial.println("✅ LoRa init successful");
-
-    // ── Must match Arduino receiver settings exactly ────────────────
     LoRa.setSpreadingFactor(7);
     LoRa.setSignalBandwidth(125E3);
     LoRa.setCodingRate4(5);
     LoRa.setPreambleLength(8);
     LoRa.setSyncWord(0x39);
     LoRa.enableCrc();
-    // ────────────────────────────────────────────────────────────────
-
-    Serial.println("LoRa init OK");
-    Serial.println("434 MHz | SF7 | BW125 | CR4/5 | SyncWord 0x39");
-    Serial.println("Ready to send.");
+    Serial.println("✅ LoRa init OK — 433 MHz | SF7 | BW125 | CR4/5 | SyncWord 0x39");
   } else {
     loRaAvailable = false;
     Serial.println("⚠️ LoRa not detected");
   }
-  // ===============================================================
 
   // ===== OTA INIT =====
   ota.begin();
   ota.setVersion(CURRENT_FIRMWARE_VERSION);
 
-
   print_wakeup_reason();
 
-  // ===================== LoRa SEND ON EXT0 (ADDED ONLY) =====================
-  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0 && loRaAvailable) {
+  // LoRa send on EXT0 (MPU motion wakeup)
+  if (cause == ESP_SLEEP_WAKEUP_EXT0 && loRaAvailable) {
     Serial.println("📡 Sending LoRa packet (motion wake)");
     LoRa.beginPacket();
     LoRa.print("Motion detected at " + tId);
     LoRa.endPacket();
   }
-  // ========================================================================
 
+  // Read accumulated rainfall, then reset counter
   float rainfall = getRainfallMM();
 
   String url =
@@ -218,24 +250,18 @@ void setup() {
     + tId + "&" + tId + "s1=" + String(readTemp()) + "," + String(readHumidity()) + "&" + tId + "s2=" + String(readPressure()) + "&" + tId + "s3=" + String(rainfall) + "&" + tId + "s4=" + String(readLight()) + "&" + tId + "s5=" + getS5Reading() + "&" + tId + "s6=" + String(readSoilTemperature()) + "&" + tId + "s7=" + String(analogRead(SOIL_MOISTURE)) + "&" + tId + "s8=0" + "&" + tId + "s9=00.0000|00.0000";
 
   String response = sendGSMData(url);
-  String otaVersion;
-  String otaUrl;
+  String otaVersion, otaUrl;
 
-  // ===== OTA DECISION (UNCHANGED) =====
   if (!extractOTA(response, otaVersion, otaUrl)) {
     Serial.println("❌ OTA PARSE FAILED");
   } else {
-
     Serial.println("✅ OTA PARSE OK");
     Serial.println("Version : " + otaVersion);
     Serial.println("URL (raw): " + otaUrl);
 
-    // 🔥 FIX: unescape JSON URL (\/ → /)
     otaUrl.replace("\\/", "/");
-
     Serial.println("URL (fixed): " + otaUrl);
 
-    // Version decision
     if (otaVersion == CURRENT_FIRMWARE_VERSION) {
       Serial.println("Firmware already up to date");
     } else {
@@ -278,57 +304,36 @@ String sendGSMData(String url) {
   String response = "";
   String urcLine = "";
 
-  // --- Basic init ---
   SerialAt.println("AT");
   delay(200);
-
   SerialAt.println("AT+CGDCONT=1,\"IP\",\"airtelgprs.com\"");
   delay(200);
-
   SerialAt.println("AT+CGACT=1,1");
   delay(1000);
-
   SerialAt.println("AT+HTTPINIT");
   delay(1000);
-
   SerialAt.print("AT+HTTPPARA=\"URL\",\"");
   SerialAt.print(url);
   SerialAt.println("\"");
   delay(500);
-
-  // --- Start HTTP GET ---
   SerialAt.println("AT+HTTPACTION=0");
 
   unsigned long start = millis();
   int contentLength = -1;
 
-  // --- WAIT FOR FULL +HTTPACTION LINE ---
   while (millis() - start < 20000) {
-
     while (SerialAt.available()) {
       char c = SerialAt.read();
-
-      // accumulate line
       if (c == '\n') {
         urcLine.trim();
-
-        // Debug print
-        if (urcLine.length()) {
-          Serial.println(urcLine);
-        }
-
-        // Check for HTTPACTION line
+        if (urcLine.length()) Serial.println(urcLine);
         if (urcLine.startsWith("+HTTPACTION:")) {
-
-          // Format: +HTTPACTION: 0,200,450
           int lastComma = urcLine.lastIndexOf(',');
-          if (lastComma != -1) {
+          if (lastComma != -1)
             contentLength = urcLine.substring(lastComma + 1).toInt();
-          }
           goto READ_BODY;
         }
-
-        urcLine = "";  // reset for next line
+        urcLine = "";
       } else {
         urcLine += c;
       }
@@ -336,60 +341,43 @@ String sendGSMData(String url) {
   }
 
 READ_BODY:
-
   if (contentLength <= 0) {
     Serial.println("❌ HTTPACTION failed or empty response");
     SerialAt.println("AT+HTTPTERM");
     return "";
   }
 
-  // --- READ BODY ---
   SerialAt.print("AT+HTTPREAD=0,");
   SerialAt.println(contentLength);
 
   start = millis();
   while (millis() - start < 20000) {
-    while (SerialAt.available()) {
-      char c = SerialAt.read();
-      response += c;
-    }
+    while (SerialAt.available()) response += (char)SerialAt.read();
     if (response.indexOf("}") != -1) break;
   }
 
   SerialAt.println("AT+HTTPTERM");
   delay(500);
 
-  // --- Extract JSON only ---
   int js = response.indexOf("{");
   int je = response.lastIndexOf("}");
-  if (js != -1 && je != -1 && je > js) {
+  if (js != -1 && je != -1 && je > js)
     response = response.substring(js, je + 1);
-  } else {
+  else
     response = "";
-  }
 
   Serial.println("===== RAW RESPONSE =====");
   Serial.println(response);
-
   return response;
 }
 
 void print_wakeup_reason() {
   esp_sleep_wakeup_cause_t reason = esp_sleep_get_wakeup_cause();
   switch (reason) {
-    case ESP_SLEEP_WAKEUP_EXT0:
-      Serial.println("🔔 Wakeup: MPU interrupt");
-      break;
-    case ESP_SLEEP_WAKEUP_EXT1:
-      Serial.println("🌧️ Wakeup: Rain interrupt");
-      rainWake = true;
-      break;
-    case ESP_SLEEP_WAKEUP_TIMER:
-      Serial.println("⏰ Wakeup: Timer (scheduled)");
-      break;
-    default:
-      Serial.printf("Wakeup cause: %d\n", reason);
-      break;
+    case ESP_SLEEP_WAKEUP_EXT0: Serial.println("🔔 Wakeup: MPU interrupt"); break;
+    case ESP_SLEEP_WAKEUP_EXT1: Serial.println("🌧️ Wakeup: Rain tip"); break;
+    case ESP_SLEEP_WAKEUP_TIMER: Serial.println("⏰ Wakeup: Timer (scheduled)"); break;
+    default: Serial.printf("Wakeup cause: %d\n", reason); break;
   }
 }
 
@@ -398,21 +386,15 @@ void readGSM() {
   while (SerialAt.available()) Serial.write(SerialAt.read());
 }
 
-// ===================== Sensors (UNCHANGED) =====================
+// ===================== Sensors =====================
 void initBH1750() {
-  if (!lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE, 0x23)) {
+  if (!lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE, 0x23))
     Serial.println("❌ BH1750 not found!");
-    // while (1)
-    //   ;
-  }
 }
 
 void initBMP180() {
-  if (!bmp.begin()) {
+  if (!bmp.begin())
     Serial.println("❌ BMP180 not found!");
-    // while (1)
-    //   ;
-  }
 }
 
 float readLight() {
@@ -423,11 +405,7 @@ float readLight() {
 
 float readPressure() {
   uint32_t d = bmp.readPressure();
-  float p = 0;
-  Serial.println(d);
-  if (d != 0) {
-    p = d / 100.0;
-  }
+  float p = (d != 0) ? d / 100.0 : 0;
   Serial.printf("🌡️ Pressure: %.2f hPa\n", p);
   return p;
 }
@@ -478,15 +456,13 @@ void readMPU() {
   float Ax = a.acceleration.x;
   float Ay = a.acceleration.y;
   float Az = a.acceleration.z;
-
   float Wx = g.gyro.x * (180.0 / PI);
   float Wy = g.gyro.y * (180.0 / PI);
   float Wz = g.gyro.z * (180.0 / PI);
 
-  // Calculate Roll, Pitch, Yaw
   float roll = atan2(Ay, Az) * 180.0 / PI;
   float pitch = atan(-Ax / sqrt(Ay * Ay + Az * Az)) * 180.0 / PI;
-  float yaw = atan2(Wy, Wx) * 180.0 / PI;  // Approx yaw
+  float yaw = atan2(Wy, Wx) * 180.0 / PI;
 
   Serial.println("--------- MPU DATA ---------");
   Serial.printf("Ax: %.2f  Ay: %.2f  Az: %.2f (m/s²)\n", Ax, Ay, Az);
@@ -495,11 +471,14 @@ void readMPU() {
   Serial.println("----------------------------");
 }
 
-
 float getRainfallMM() {
-  float mm = rainCount * RAIN_MM_PER_TIP;
-  Serial.printf("🌧️ Rainfall: %.2f mm\n", mm);
-  rainCount = 0;
+  noInterrupts();
+  unsigned long count = rainCount;
+  rainCount = 0;  // reset after reading
+  interrupts();
+
+  float mm = count * RAIN_MM_PER_TIP;
+  Serial.printf("🌧️ Rainfall: %.4f mm  (%lu tips)\n", mm, count);
   return mm;
 }
 
@@ -513,8 +492,8 @@ String getGNSSLocation() {
   int lonEnd = response.indexOf(",", lonStart + 1);
   if (latStart > 0 && lonStart > 0 && lonEnd > 0) {
     String lat = response.substring(latStart + 1, lonStart);
-    String lon = response.substring(lonStart + 1, lonEnd);
     lat.trim();
+    String lon = response.substring(lonStart + 1, lonEnd);
     lon.trim();
     return lat + "," + lon;
   }
@@ -527,11 +506,21 @@ String getS5Reading() {
   float pitch = atan(-a.acceleration.x / sqrt(a.acceleration.y * a.acceleration.y + a.acceleration.z * a.acceleration.z)) * 180.0 / PI;
   float yaw = atan2(g.gyro.z, g.gyro.x) * 180.0 / PI;
 
-  String gnssData = getGNSSLocation();
-  return String(a.acceleration.x, 2) + "," + String(a.acceleration.y, 2) + "," + String(a.acceleration.z, 2) + "," + String(g.gyro.x, 2) + "," + String(g.gyro.y, 2) + "," + String(g.gyro.z, 2) + "," + String(roll, 2) + "," + String(pitch, 2) + "," + String(yaw, 2) + "," + String(motionCount) + "," + "0,0";
+  return String(a.acceleration.x, 2) + "," + String(a.acceleration.y, 2) + "," + String(a.acceleration.z, 2) + "," + String(g.gyro.x, 2) + "," + String(g.gyro.y, 2) + "," + String(g.gyro.z, 2) + "," + String(roll, 2) + "," + String(pitch, 2) + "," + String(yaw, 2) + "," + String(motionCount) + ",0,0";
 }
+/*
+t1&t1s1=28.60,42.10
+&t1s2=882.61
+&t1s3=1.68
+&t1s4=28.33
+&t1s5=1.61,9.32,-0.73,-0.00,0.05,0.09,94.47,-9.78,90.50,0,0,0
+&t1s6=22.34
+&t1s7=2987
+&t1s8=0
+&t1s9=00.0000|00.0000
+*/
 
-  /*
+/*
   AT+CGDCONT=1,"IP","airtelgprs.com"
   AT+CGACT=1,1
   AT+HTTPINIT
